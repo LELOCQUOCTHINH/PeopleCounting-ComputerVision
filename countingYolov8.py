@@ -16,7 +16,7 @@ def RGB(event, x, y, flags, param):
 
 cv2.namedWindow('RGB')
 cv2.setMouseCallback('RGB', RGB)
-cap=cv2.VideoCapture('3.mp4')
+cap=cv2.VideoCapture('test_singleperson.mp4')
 
 # fourcc = cv2.VideoWriter_fourcc(*'avc1')
 # out = cv2.VideoWriter('output.avi',fourcc, 5, (640,480))

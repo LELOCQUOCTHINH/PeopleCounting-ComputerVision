@@ -10,8 +10,8 @@ cin  =  0
 cout =  0
 pre  =  0
 prei =  800
-fourcc = cv2.VideoWriter_fourcc(*'XVID')
-out = cv2.VideoWriter('Video_output.mp4',fourcc,2, (680,720),1)
+# fourcc = cv2.VideoWriter_fourcc(*'XVID')
+# out = cv2.VideoWriter('Video_output.mp4',fourcc,2, (680,720),1)
 ############################################
 
 ############################################
@@ -45,11 +45,13 @@ while(1):
             else:
                 return 0
         ret,mask = cv2.threshold(mask,127,255,cv2.THRESH_BINARY)
-        _,contours, hierarchy = cv2.findContours(mask.copy(),cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+        contours, hierarchy = cv2.findContours(mask.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         n=len(contours)
         cnt=0
         m=0
-        img = cv2.line(img, (width/2,0), (width/2,600), (0,0,255),4)
+        # Draw horizontal line at y = height//2
+        line_y = height // 2
+        img = cv2.line(img, (0, line_y), (width, line_y), (0, 0, 255), 4)
         for i in range(1,n):
                 area=cv2.contourArea(contours[i])
                 # print area
@@ -81,7 +83,7 @@ while(1):
         cv2.putText(img,IN, (10, 50),cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
         cv2.putText(img,OUT, (10,100),cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
         cv2.imshow('image',img)
-        out.write(img)
+        # out.write(img)
         ## End the video loop
         cv2.waitKey(1)  
     else:
