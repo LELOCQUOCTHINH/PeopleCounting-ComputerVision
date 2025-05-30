@@ -13,20 +13,22 @@ import logging
 import argparse
 from picamera2 import Picamera2
 import psutil
+from postTelemetry_mqtt_tb import MQTTThingsBoardClient
 
-# setup logger
+# Setup logger
 logging.basicConfig(level=logging.DEBUG, format="[DEBUG] %(message)s")
 logger = logging.getLogger(__name__)
 
 # Signal handler for Ctrl+C (negligible resource use, safe for Pi Zero 2 W)
 def signal_handler(sig, frame):
     print("Ctrl+C detected, cleaning up...")
-    global running
+    global running, tb_client
     running = False
     if isinstance(source, PiCameraReader):
         source.release()
     else:
         source.release()
+    tb_client.disconnect()
     cv2.destroyAllWindows()
     # Print average resource usage
     if cpu_usages:
@@ -35,6 +37,8 @@ def signal_handler(sig, frame):
         print(f"Average Memory Usage: {sum(memory_usages)/len(memory_usages):.2f}%")
     if temperatures:
         print(f"Average Temperature: {sum(temperatures)/len(temperatures):.2f}°C")
+    if fps_values:
+        print(f"Average FPS: {sum(fps_values)/len(fps_values):.2f}")
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -147,7 +151,7 @@ class PiCameraReader:
         self.camera.stop()
         logger.debug("PiCamera released")
 
-def process_frames(source, process_q, display_q):
+def process_frames(source, process_q, display_q, tb_client, server_IP, port, token):
     #Background Substractor
     fgbg = cv2.createBackgroundSubtractorMOG2(detectShadows=True)
 
@@ -164,6 +168,8 @@ def process_frames(source, process_q, display_q):
     back = None
     cnt_up = 0
     cnt_down = 0
+    frame_count = 0
+    start_time = time.time()
 
     #Lines coordinate for counting
     h, w = 240, 320  # Default for PiCamera, updated for video
@@ -196,6 +202,16 @@ def process_frames(source, process_q, display_q):
                 display_q.put((None, cnt_up, cnt_down))
                 break
             continue
+
+        frame_count += 1
+        current_time = time.time()
+        elapsed_time = current_time - start_time
+        if elapsed_time >= 10:
+            fps = frame_count / elapsed_time
+            fps_values.append(fps)
+            tb_client.send_telemetry(server_IP, port, token, "FPS", round(fps, 2))
+            frame_count = 0
+            start_time = current_time
 
         # Update dimensions for video files
         if isinstance(source, VideoReader):
@@ -283,6 +299,10 @@ def process_frames(source, process_q, display_q):
                                 cnt_up += 1
                                 #i.updateCoords(cx,cy)
                                 print ("ID:",i.getId(),'crossed going out at',time.strftime("%c"))
+                                # Send telemetry
+                                tb_client.send_telemetry(server_IP, port, token, "exited_people", cnt_up)
+                                tb_client.send_telemetry(server_IP, port, token, "entered_people", cnt_down)
+                                tb_client.send_telemetry(server_IP, port, token, "people_inside", cnt_down - cnt_up)
                             elif i.going_DOWN(line_down,line_up) == True and i.getDir() == 'down':
                                 # if w > 100:
                                 #     count_down = w/60
@@ -292,6 +312,10 @@ def process_frames(source, process_q, display_q):
                                 #i.updateCoords(cx,cy)
                                 cnt_down += 1
                                 print ("ID:",i.getId(),'crossed going in at',time.strftime("%c"))
+                                # Send telemetry
+                                tb_client.send_telemetry(server_IP, port, token, "exited_people", cnt_up)
+                                tb_client.send_telemetry(server_IP, port, token, "entered_people", cnt_down)
+                                tb_client.send_telemetry(server_IP, port, token, "people_inside", cnt_down - cnt_up)
                             break
                         if i.getState() == '1':
                             if i.getDir() == 'down' and i.getY() > down_limit:
@@ -345,7 +369,7 @@ def process_frames(source, process_q, display_q):
         # Put processed frame in display queue
         display_q.put((frame, cnt_up, cnt_down))
 
-def monitor_resources():
+def monitor_resources(tb_client, server_IP, port, token):
     global cpu_usages, memory_usages, temperatures
     last_time = time.time()
     while running:
@@ -361,22 +385,38 @@ def monitor_resources():
             cpu_usages.append(cpu_usage)
             memory_usages.append(memory_usage)
             temperatures.append(temp)
-            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] CPU: {cpu_usage:.2f}%, Memory: {memory_usage:.2f}%, Temp: {temp:.2f}°C")
+            tb_client.send_telemetry(server_IP, port, token, "CPU_usage", round(cpu_usage, 2))
+            tb_client.send_telemetry(server_IP, port, token, "memory_usage", round(memory_usage, 2))
+            tb_client.send_telemetry(server_IP, port, token, "Temperature", round(temp, 2))
             last_time = current_time
         time.sleep(1)
 
 def main():
-    global running, source, cpu_usages, memory_usages, temperatures
+    global running, source, cpu_usages, memory_usages, temperatures, tb_client, fps_values
     running = True
     cpu_usages = []
     memory_usages = []
     temperatures = []
+    fps_values = []
 
     # Parse command-line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input", type=str, default="picam",
                         help="Input source: video file path or 'picam' for PiCamera")
+    parser.add_argument("-s", "--server-IP", type=str, default="",
+                        help="ThingsBoard server domain")
+    parser.add_argument("-P", "--Port", type=int, default=0,
+                        help="MQTT port for ThingsBoard server")
+    parser.add_argument("-a", "--token", type=str, default="",
+                        help="Device access token for ThingsBoard authentication")
     args = parser.parse_args()
+
+    if not args.server_IP or not args.Port or not args.token:
+        print("Error: --server-IP, --Port, and --token are required")
+        sys.exit(1)
+
+    # Initialize ThingsBoard client
+    tb_client = MQTTThingsBoardClient()
 
     # Initialize input source
     if args.input.lower() == "picam":
@@ -390,15 +430,15 @@ def main():
 
     # Initialize queues
     process_q = queue.Queue(maxsize=10)
-    display_q = queue.Queue(maxsize=10)
+    display_q = queue.Queue(maxsize=5)
 
     # Start processing thread
-    process_thread = threading.Thread(target=process_frames, args=(source, process_q, display_q))
+    process_thread = threading.Thread(target=process_frames, args=(source, process_q, display_q, tb_client, args.server_IP, args.Port, args.token))
     process_thread.daemon = True
     process_thread.start()
 
     # Start resource monitoring thread
-    monitor_thread = threading.Thread(target=monitor_resources)
+    monitor_thread = threading.Thread(target=monitor_resources, args=(tb_client, args.server_IP, args.Port, args.token))
     monitor_thread.daemon = True
     monitor_thread.start()
 
@@ -429,6 +469,8 @@ def main():
                     print(f"Average Memory Usage: {sum(memory_usages)/len(memory_usages):.2f}%")
                 if temperatures:
                     print(f"Average Temperature: {sum(temperatures)/len(temperatures):.2f}°C")
+                if fps_values:
+                    print(f"Average FPS: {sum(fps_values)/len(fps_values):.2f}")
                 break
             cv2.imshow('Counting', frame)
             #cv2.imshow('track',mask)
@@ -447,9 +489,12 @@ def main():
                 print(f"Average Memory Usage: {sum(memory_usages)/len(memory_usages):.2f}%")
             if temperatures:
                 print(f"Average Temperature: {sum(temperatures)/len(temperatures):.2f}°C")
+            if fps_values:
+                print(f"Average FPS: {sum(fps_values)/len(fps_values):.2f}")
             break
 
     #Cleanup
+    tb_client.disconnect()
     source.release()
     cv2.destroyAllWindows()
 
