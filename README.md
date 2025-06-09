@@ -90,7 +90,7 @@ This project implements a people counting system for buses using a Raspberry Pi 
  - if you want to manipulate with [My Dashboard](https://app.coreiot.io/dashboard/5eef5c50-3ca9-11f0-aae0-0f85903b3644?publicId=00e331c0-f1ec-11ef-87b5-21bccf7d29d5), you can run this command:
    
  ```bash
-  python3 single_cam.py --input <test1.mp4> --server-IP app.coreiot.io --Port 1883 --token I1WYm7V1FMBsKgBLMJVL
+  python counter.py -i test1.mp4 --server-IP app.coreiot.io -P 1883 -a I1WYm7V1FMBsKgBLMJVL
  ```
 
  (For testing with test1.mp4).
